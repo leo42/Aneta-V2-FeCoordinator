@@ -238,12 +238,12 @@ async function handleRedemptionRequest(block: CardanoBlock, tx: any, index: numb
   const txBlock =  Number(block.header.height);
   const clientAddress = getSender(tx);
   const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
-  const datum = tx.outputs[index].datum.toJson().valueOf() as any;
-  const amount = datum.constr.fields[0];
+  const amount = Number(tx.outputs[index].assets[0].assets[0].outputCoin);
   const state = requestState.received;
-  const redemptionRequestListing : RedemptionRequest = {txHash, txIndex, txBlock, clientAccount, clientAddress, amount, state, burnTx: tx.inputs[0].txHash, redemptiontx: txHash}; 
+  const redemptionRequestListing : RedemptionRequest = {txHash, txIndex, txBlock, clientAccount, clientAddress, amount, state, burnTx: tx.inputs[0].txHash}; 
   await mongo.collection("redemptionRequests").insertOne(redemptionRequestListing);
 }
+
 
 async function handleRequestCompletion(block: CardanoBlock, tx: any){
   for(const input of tx.inputs){ 
@@ -251,12 +251,11 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
     const txIndex = input.outputIndex;
     const txBlock =  Number(block.header.height);
     const mintRequest = await mongo.collection("mintRequests").findOne({txHash, txIndex});
-    console.log("Completing request", txHash, txIndex, mintRequest)
     if(mintRequest){
       console.log("completing mint request", txHash, txIndex, mintRequest)
       if(tx.mint && tx.mint.length > 0){
           mintRequest.state = requestState.completed;
-          const mintTx = Buffer.from(tx.inputs[0].txHash).toString('hex');
+          const mintTx = Buffer.from(tx.hash).toString('hex');
           const payments = tx.auxiliary.metadata[0]?.value.metadatum.case === "array" ? tx.auxiliary.metadata[0].value.metadatum.value.items.map((item) => 
             item.metadatum.case === "array" ? (item.metadatum.value.items[0].metadatum.value as string)   : undefined   
             )
@@ -277,13 +276,19 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
     }
     const redemptionRequest = await mongo.collection("redemptionRequests").findOne({txHash, txIndex});
     if(redemptionRequest){
+      if(tx.mint && tx.mint.length > 0){
+        const burnTx = Buffer.from(tx.hash).toString('hex');
+        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed, burnTx}});
+        return;
+      }else{
+        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected}});
+      }
       console.log("completing redemption request", txHash, txIndex, redemptionRequest)
-      await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed}});
-      await mongo.collection("burn").insertOne(redemptionRequest);
     }
-    
+   
   }
 }
+
 
 
 function convertAddressToBech32(byteArray: Uint8Array): string {
