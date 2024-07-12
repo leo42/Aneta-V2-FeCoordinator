@@ -1,4 +1,5 @@
 import { start } from './indexer.js'
+import { startPaths } from './paths.js';
 import fs from 'fs';
 import util from 'util';
 import minimist from 'minimist';
@@ -22,3 +23,4 @@ export const config = {
  
  
 start()
+startPaths()

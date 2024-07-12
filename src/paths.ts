@@ -17,6 +17,7 @@ export async function startPaths(){
     }, 10000);
 }
 
+
 async function checkPaths(){
     for(let i = 0; i < config.paymentPaths; i++){
         const path = await mongo.collection("paths").findOne({path: i});
@@ -24,11 +25,9 @@ async function checkPaths(){
             await mongo.collection("paths").insertOne({path: i, address: getAddress(i)});
         }
     }
-    const paths = Array.from({length: config.paymentPaths}, (_, index) => getAddress(index));
-    console.log(paths);
 }
 
-function getAddress(index: number){
+export function getAddress(index: number){
     if(index < 0 || index >= config.paymentPaths) throw new Error('Index out of range');
     const HexKeys =  topology.topology.map((guardian , guardianIndex) => {
         const bip32 = BIP32Factory(ecc);

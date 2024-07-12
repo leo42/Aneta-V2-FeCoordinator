@@ -1,29 +1,41 @@
 import { MongoClient } from 'mongodb';
 import { CardanoSyncClient , CardanoBlock } from "@utxorpc/sdk";
 import { protocol, config } from './index.js';
+import { getAddress } from './paths.js';
 import axios from "axios";
-import { MintRequestSchema } from './types.js';
+import { MintRequestSchema , MintRequest, requestState , Request , RedemptionRequest } from './types.js';
 import * as Lucid  from 'lucid-cardano'
 
 const client = new MongoClient("mongodb://127.0.0.1:27017");
 const mongo =  client.db("webData");
-const openRequests: Array<[string, number]> = [];
-
+let openRequests: Array<[string, number, Date]> = [];
+let lucid : Lucid.Lucid;
 let address : string;
+let Uint8ArrayAddress : Uint8Array;
 
 export async function start() {
   console.log("Starting Indexer");
   await client.connect();
-  
-  const lucid = await Lucid.Lucid.new( undefined, (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as Lucid.Network);
+  startGarbageCollection()
+  lucid = await Lucid.Lucid.new( undefined, (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as Lucid.Network);
   const mintingScript =  {type: "PlutusV2" as Lucid.ScriptType, script: protocol.contract};
   const cBTCPolicy = lucid.utils.mintingPolicyToId(mintingScript);
   address =  lucid.utils.credentialToAddress({type: "Script", hash: cBTCPolicy});
+  Uint8ArrayAddress =  convertAddressToBytes(address);
 
   console.log("cBTCPolicy", protocol);
   console.log("Address", address);
   await dumpHistory();
   startFollow();
+}
+
+
+async function startGarbageCollection(){
+  setInterval(() => {
+    const now = new Date();
+    const threeDaysAgo = new Date(now.getTime() - (3 * 24 * 60 * 60 * 1000));
+    openRequests = openRequests.filter(([, , date]) => date > threeDaysAgo);
+  }, 10000);
 }
 
 
@@ -160,7 +172,6 @@ function decodeDatum(datum: string)  {
     
 
     let blockHash = Buffer.from(block.header.hash).toString('hex');
-  const Uint8ArrayAddress = await convertAddressToBytes(address);
  // console.log("Tx",  Uint8ArrayAddress);
 
   await Promise.all(block.body.tx.map(async (tx) => {
@@ -168,18 +179,12 @@ function decodeDatum(datum: string)  {
     if(tx.outputs.some((output) => areUint8ArraysEqual(output.address, Uint8ArrayAddress))){
         tx.outputs.forEach(async (ouput, index) => {
            if(areUint8ArraysEqual(ouput.address, Uint8ArrayAddress)){
-            openRequests.push([Buffer.from(tx.hash).toString('hex')  , index]);
+            openRequests.push([Buffer.from(tx.hash).toString('hex')  , index, new Date()]);
             try{
               if(ouput.assets.length === 0){
-                  console.log("Minting request found", block.header.height, blockHash, tx.hash);
-                  const datum = ouput.datum.toJson().valueOf() as any;
-                  console.log("Datum", (datum as any).constr.fields[0].bigInt.int, typeof datum);
-                  const amount = datum.constr.fields[0].bigInt.int
-                  const path = datum.constr.fields[1].bigInt.int;
-                  console.log("Amount", amount, "path", path);
-                  // const path = decodeDatum(ouput.datum.toJson()).path;
+                await handleMintRequest(block, tx, index);
               }else{
-                  console.log("Redemption request found", block.header.height, blockHash, tx.hash);
+                await handleRedemptionRequest(block, tx, index);
               } 
             }catch(e){
               console.log("Broken request found", e);
@@ -195,19 +200,100 @@ function decodeDatum(datum: string)  {
     
     if(tx.inputs.some((input) => 
         openRequests.some(([txHash, index]) => Buffer.from(input.txHash).toString('hex') === txHash && input.outputIndex === index))){
-        console.log("request Completion found", block.header.height, blockHash, tx.hash);
+          handleRequestCompletion(block, tx);
+          console.log("request Completion found", block.header.height, blockHash, tx.hash);
     }    
   }));  
 }
 
-async function convertAddressToBech32(byteArray: Uint8Array): Promise<string> {
+function getSender(tx){
+  const myAddressBytes = convertAddressToBytes(address);
+  for(let i = 0; i < tx.outputs.length; i++){
+    if(!areUint8ArraysEqual(tx.outputs[i].address, myAddressBytes)){
+      return  convertAddressToBech32(tx.outputs[i].address);
+    }
+  }
+}
+
+async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
+  
+  const txHash = Buffer.from(tx.hash).toString('hex');
+  const txIndex = index;
+  const txBlock =  Number(block.header.height);
+  const clientAddress = getSender(tx);
+  const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
+  const datum = tx.outputs[index].datum.toJson().valueOf() as any;
+  const amount = datum.constr.fields[0].bigInt.int;
+  const paymentPath = Number(datum.constr.fields[1].bigInt.int);
+  const state = requestState.received;
+  const paymentAddress = getAddress(paymentPath)
+  const mintRequestListing : MintRequest = {txHash, txIndex, txBlock, clientAccount, clientAddress, amount, state, paymentPath, paymentAddress};
+  await mongo.collection("mintRequests").insertOne(mintRequestListing);
+}
+
+
+async function handleRedemptionRequest(block: CardanoBlock, tx: any, index: number){
+  const txHash = Buffer.from(tx.hash).toString('hex');
+  const txIndex = index;
+  const txBlock =  Number(block.header.height);
+  const clientAddress = getSender(tx);
+  const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
+  const datum = tx.outputs[index].datum.toJson().valueOf() as any;
+  const amount = datum.constr.fields[0];
+  const state = requestState.received;
+  const redemptionRequestListing : RedemptionRequest = {txHash, txIndex, txBlock, clientAccount, clientAddress, amount, state, burnTx: tx.inputs[0].txHash, redemptiontx: txHash}; 
+  await mongo.collection("redemptionRequests").insertOne(redemptionRequestListing);
+}
+
+async function handleRequestCompletion(block: CardanoBlock, tx: any){
+  for(const input of tx.inputs){ 
+    const txHash =  Buffer.from(input.txHash).toString('hex');
+    const txIndex = input.outputIndex;
+    const txBlock =  Number(block.header.height);
+    const mintRequest = await mongo.collection("mintRequests").findOne({txHash, txIndex});
+    console.log("Completing request", txHash, txIndex, mintRequest)
+    if(mintRequest){
+      console.log("completing mint request", txHash, txIndex, mintRequest)
+      if(tx.mint && tx.mint.length > 0){
+          mintRequest.state = requestState.completed;
+          const mintTx = Buffer.from(tx.inputs[0].txHash).toString('hex');
+          const payments = tx.auxiliary.metadata[0]?.value.metadatum.case === "array" ? tx.auxiliary.metadata[0].value.metadatum.value.items.map((item) => 
+            item.metadatum.case === "array" ? (item.metadatum.value.items[0].metadatum.value as string)   : undefined   
+            )
+            : [];
+          await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed , mintTx, payments}});
+          return;
+        }else{
+          
+          if( areUint8ArraysEqual(tx.outputs[0].address,Uint8ArrayAddress)){
+            // Confescate the funds
+            
+            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.confescated}});
+          }else{
+            // reject
+            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected}});
+          }
+        }
+    }
+    const redemptionRequest = await mongo.collection("redemptionRequests").findOne({txHash, txIndex});
+    if(redemptionRequest){
+      console.log("completing redemption request", txHash, txIndex, redemptionRequest)
+      await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed}});
+      await mongo.collection("burn").insertOne(redemptionRequest);
+    }
+    
+  }
+}
+
+
+function convertAddressToBech32(byteArray: Uint8Array): string {
 
   const address = Lucid.C.Address.from_bytes(byteArray);
   const bech32Address = address.to_bech32("addr_test");
   return bech32Address;
 }
 
-async function convertAddressToBytes(bech32Address: string): Promise<Uint8Array> {
+function convertAddressToBytes(bech32Address: string): Uint8Array {
   const address = Lucid.C.Address.from_bech32(bech32Address);
   return address.to_bytes();
 }
