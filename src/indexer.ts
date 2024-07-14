@@ -1,5 +1,5 @@
 import { MongoClient } from 'mongodb';
-import { CardanoSyncClient , CardanoBlock } from "@utxorpc/sdk";
+import { CardanoSyncClient , CardanoBlock, CardanoPoint } from "@utxorpc/sdk";
 import { protocol, config } from './index.js';
 import { getAddress } from './paths.js';
 import axios from "axios";
@@ -16,6 +16,10 @@ let Uint8ArrayAddress : Uint8Array;
 export async function start() {
   console.log("Starting Indexer");
   await client.connect();
+  const openMintRequests = await mongo.collection("mintRequests").find({state: requestState.received}).toArray();
+  const openRedemptionRequests =await mongo.collection("redemptionRequests").find({state: requestState.received}).toArray();
+  openMintRequests.map((request) => openRequests.push([request.txHash, request.txIndex, new Date()]));
+  openRedemptionRequests.map((request) => openRequests.push([request.txHash, request.txIndex, new Date()]));
   startGarbageCollection()
   lucid = await Lucid.Lucid.new( undefined, (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as Lucid.Network);
   const mintingScript =  {type: "PlutusV2" as Lucid.ScriptType, script: protocol.contract};
@@ -81,7 +85,7 @@ async function startFollow() {
               await handleUndoBlock(block.block); 
               break;
           case "reset":
-              console.log(block.action, block.point);
+              await handleResetBlock(block.point);
               break;
           default:
               console.log("Strange Block");
@@ -122,7 +126,7 @@ async function dumpHistory(){
       console.timeEnd("Chunk")
       //set tip to the last block
       const lastBlock = chunk.block[chunk.block.length - 1].chain.value as CardanoBlock;
-   //   await mongo.collection("height").updateOne({type: "top"}, {$set: {hash: Buffer.from(lastBlock.header.hash).toString('hex') , slot: lastBlock.header.slot, height: lastBlock.header.height}}, {upsert: true});
+      await mongo.collection("height").updateOne({type: "top"}, {$set: {hash: Buffer.from(lastBlock.header.hash).toString('hex') , slot: lastBlock.header.slot, height: lastBlock.header.height}}, {upsert: true});
       console.time("NextChunkFetch")
       chunk = await rcpClient.inner.dumpHistory( {startToken: tipPoint, maxItems: chunkSize})
       console.timeEnd("NextChunkFetch")
@@ -144,13 +148,30 @@ function decodeDatum(datum: string)  {
   return Lucid.Data.from(datum, MintRequestSchema);
 }
 
+async function handleResetBlock(block: CardanoPoint){
+  let blockSlot = block.slot;
+  const blockHash = Buffer.from(block.hash).toString('hex');
+  
+  
+    await mongo.collection("mintRequests").updateMany({completionBlock: {$gt: blockSlot}}, {$set: {state: requestState.received}, $unset: {mintTx: "", payments: "", completedSlot : ""}});
+    await mongo.collection("redemptionRequests").updateMany({completionBlock: {$gt: blockSlot}}, {$set: {state: requestState.received, burnTx: "" , completedSlot : ""}});
+  
+    await mongo.collection("mintRequests").deleteMany({txBlock: {$gt: blockSlot}});
+    await mongo.collection("redemptionRequests").deleteMany({txSlot: {$gt: blockSlot}});
+  
+    await mongo.collection("height").updateOne({type: "top"}, {$set: {hash: blockHash, slot: block.slot}}, {upsert: true});
+  
+}
+
 
  async function handleUndoBlock(block: CardanoBlock){
-  let blockHeight = block.header.height;
+  let blockSlot = block.header.slot;
   const blockHash = Buffer.from(block.header.hash).toString('hex');
-  await mongo.collection("mint").deleteMany({height: blockHeight});
-  await mongo.collection("burn").deleteMany({height: blockHeight});
+  await mongo.collection("mintRequests").updateMany({completedSlot: blockSlot}, {$set: {state: requestState.received}, $unset: {mintTx: "", payments: "", completedSlot: ""}});
+  await mongo.collection("redemptionRequests").updateMany({completedSlot: blockSlot}, {$set: {state: requestState.received}, $unset : {burnTx: "", completedSlot: ""}});
 
+  await mongo.collection("mintRequests").deleteMany({txSlot: blockSlot});
+  await mongo.collection("redemptionRequests").deleteMany({txSlot: blockSlot});
 
   await mongo.collection("height").updateOne({type: "top"}, {$set: {hash: blockHash, slot: block.header.slot, height: block.header.height}}, {upsert: true});
 }
@@ -167,10 +188,6 @@ function decodeDatum(datum: string)  {
         throw new Error(`Block already processed ${block.header.height}, registered tip: ${tip.height}`); 
 
     }
-
-   // console.log("New Block", block.header.height);
-    
-
     let blockHash = Buffer.from(block.header.hash).toString('hex');
  // console.log("Tx",  Uint8ArrayAddress);
 
@@ -215,10 +232,12 @@ function getSender(tx){
   }
 }
 
+
+
 async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
-  
   const txHash = Buffer.from(tx.hash).toString('hex');
   const txIndex = index;
+  const txSlot =  Number(block.header.slot);
   const txBlock =  Number(block.header.height);
   const clientAddress = getSender(tx);
   const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
@@ -227,7 +246,7 @@ async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
   const paymentPath = Number(datum.constr.fields[1].bigInt.int);
   const state = requestState.received;
   const paymentAddress = getAddress(paymentPath)
-  const mintRequestListing : MintRequest = {txHash, txIndex, txBlock, clientAccount, clientAddress, amount, state, paymentPath, paymentAddress};
+  const mintRequestListing : MintRequest = {txHash, txSlot, txIndex, txBlock, clientAccount, clientAddress, amount, state, paymentPath, paymentAddress};
   await mongo.collection("mintRequests").insertOne(mintRequestListing);
 }
 
@@ -235,12 +254,13 @@ async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
 async function handleRedemptionRequest(block: CardanoBlock, tx: any, index: number){
   const txHash = Buffer.from(tx.hash).toString('hex');
   const txIndex = index;
+  const txSlot =  Number(block.header.slot);
   const txBlock =  Number(block.header.height);
   const clientAddress = getSender(tx);
   const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
   const amount = Number(tx.outputs[index].assets[0].assets[0].outputCoin);
   const state = requestState.received;
-  const redemptionRequestListing : RedemptionRequest = {txHash, txIndex, txBlock, clientAccount, clientAddress, amount, state, burnTx: tx.inputs[0].txHash}; 
+  const redemptionRequestListing : RedemptionRequest = {txHash, txIndex, txSlot, txBlock, clientAccount, clientAddress, amount, state, burnTx: tx.inputs[0].txHash}; 
   await mongo.collection("redemptionRequests").insertOne(redemptionRequestListing);
 }
 
@@ -249,7 +269,8 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
   for(const input of tx.inputs){ 
     const txHash =  Buffer.from(input.txHash).toString('hex');
     const txIndex = input.outputIndex;
-    const txBlock =  Number(block.header.height);
+    const completedSlot =  Number(block.header.slot);
+    const completionBlock =  Number(block.header.height);
     const mintRequest = await mongo.collection("mintRequests").findOne({txHash, txIndex});
     if(mintRequest){
       console.log("completing mint request", txHash, txIndex, mintRequest)
@@ -260,28 +281,29 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
             item.metadatum.case === "array" ? (item.metadatum.value.items[0].metadatum.value as string)   : undefined   
             )
             : [];
-          await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed , mintTx, payments}});
+          await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed , mintTx, payments, completedSlot}});
           return;
         }else{
           
           if( areUint8ArraysEqual(tx.outputs[0].address,Uint8ArrayAddress)){
             // Confescate the funds
             
-            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.confescated}});
+            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.confescated, completedSlot}});
           }else{
             // reject
-            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected}});
+            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected, completedSlot}});
           }
         }
     }
+
     const redemptionRequest = await mongo.collection("redemptionRequests").findOne({txHash, txIndex});
     if(redemptionRequest){
       if(tx.mint && tx.mint.length > 0){
         const burnTx = Buffer.from(tx.hash).toString('hex');
-        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed, burnTx}});
+        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed, burnTx, completedSlot}});
         return;
       }else{
-        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected}});
+        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected , completedSlot }});
       }
       console.log("completing redemption request", txHash, txIndex, redemptionRequest)
     }

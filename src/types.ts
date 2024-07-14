@@ -41,9 +41,11 @@ export interface Request {
   txHash: string,
   txIndex: number,
   txBlock: number,
+  txSlot: number,
   clientAccount : string,
   clientAddress: string,
   state: requestState
+  completedSlot?: number,
   amount: number,
 }
 
