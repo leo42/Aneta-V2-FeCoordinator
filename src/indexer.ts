@@ -290,7 +290,6 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
       if(tx.mint && tx.mint.length > 0){
 
           mintRequest.state = requestState.completed;
-          await mongo.collection("paths").updateOne({index: mintRequest.inxed}, {$set: {state: PaymentPathState.completed}});
 
           const payments = tx.auxiliary.metadata[0]?.value.metadatum.case === "array" ? tx.auxiliary.metadata[0].value.metadatum.value.items.map((item) => 
             item.metadatum.case === "array" ? (item.metadatum.value.items[0].metadatum.value as string)   : undefined   
@@ -315,6 +314,8 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
           if(competingRequests.length === 1){
             await mongo.collection("mintRequests").updateMany({paymentPath: mintRequest.paymentPath, state: requestState.conflicted}, {$set: {state: PaymentPathState.processing}});
           }
+        }else{
+          await mongo.collection("paths").updateOne({index: mintRequest.inxed}, {$set: {state: PaymentPathState.completed}});
         }
       }
 
