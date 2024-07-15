@@ -69,6 +69,7 @@ export const MintRequestSchema = Lucid.Data.Object({
 
 export enum requestState {
     received,
+    conflicted,
     rejected,
     confescated,
     completed
@@ -86,6 +87,6 @@ export enum PaymentPathState {
 export type PaymentPath = {
   index: number,
   address: string,
-  state: string,
+  state: PaymentPathState,
   serveTime: number
 }

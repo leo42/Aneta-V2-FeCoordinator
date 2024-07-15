@@ -4,7 +4,7 @@ import * as ecc  from 'tiny-secp256k1'
 import {ECPairFactory}  from 'ecpair'
 import { topology , config } from './index.js';
 import { MongoClient } from 'mongodb';
-
+import {PaymentPath , PaymentPathState} from './types.js';
 
 const bip32 = BIP32Factory(ecc);
 const client = new MongoClient("mongodb://127.0.0.1:27017");
@@ -20,12 +20,41 @@ export async function startPaths(){
 
 async function checkPaths(){
     for(let i = 0; i < config.paymentPaths; i++){
-        const path = await mongo.collection("paths").findOne({path: i});
+        const path = await mongo.collection("paths").findOne({index: i});
         if(!path){
-            await mongo.collection("paths").insertOne({path: i, address: getAddress(i)});
+            const paymentPath : PaymentPath = { index: i, state: PaymentPathState.open , address: getAddress(i) , serveTime: 0};
+            await mongo.collection("paths").insertOne(paymentPath);
+        }else{ 
+            if(path.state === PaymentPathState.served, Date.now() -  path.serveTime > config.pathReleaseTime ){
+                await mongo.collection("paths").updateOne({index: i}, { $set: {state: PaymentPathState.open}});
+            }
+            if(path.state === PaymentPathState.completed){
+                const balance = await getBitcoinAddressBalance(path.address);
+                if(balance === 0){
+                    await mongo.collection("paths").updateOne({index: i}, { $set: {state: PaymentPathState.open}});
+                }
+                
+            }
         }
     }
 }
+
+async function getBitcoinAddressBalance(address: string): Promise<number> {
+    const network = config.btcNetwork === 'mainnet' ? 'main' : 'test3';
+    const url = `https://api.blockcypher.com/v1/btc/${network}/addrs/${address}/balance`;
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        // The balance is usually in satoshis, convert to BTC if necessary
+        const balanceInBTC = data.balance / 1e8;
+        console.log(`Balance for ${address}: ${balanceInBTC} BTC`);
+        return balanceInBTC;
+    } catch (error) {
+        console.error('Error fetching Bitcoin address balance:', error);
+        throw error;
+    }
+}
+
 
 export function getAddress(index: number){
     if(index < 0 || index >= config.paymentPaths) throw new Error('Index out of range');
@@ -38,8 +67,8 @@ export function getAddress(index: number){
     const pubkeys = HexKeys.map(key => Buffer.from(key, 'hex'));
     const p2shAddress = bitcoin.payments.p2wsh({
         redeem: bitcoin.payments.p2ms({ m: topology.m , pubkeys ,
-        network: bitcoin.networks[config.network], }),
-        network: bitcoin.networks[config.network],
+        network: bitcoin.networks[config.btcNetwork], }),
+        network: bitcoin.networks[config.btcNetwork],
     });
 
     return p2shAddress.address; 

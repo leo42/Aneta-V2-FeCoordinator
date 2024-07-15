@@ -1,0 +1,15 @@
+{
+    "utxoRpc": {
+             "host": "",
+             "headers":  {} 
+         },
+     "historyStart" : {   "hash": "20e21b70d12b366a4259fa7c5b3a93a4867704b31615c1b6815f26ee83fb6f4e",
+                        "height": 1932436,
+                        "slot": 45139844
+    },
+     "scriptAddress": "",
+     "btcNetwork": "testnet",
+     "network": "preview",
+     "paymentPaths": 10,
+     "pathReleaseTime": 1200000   
+ }

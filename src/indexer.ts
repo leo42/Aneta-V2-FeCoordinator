@@ -3,7 +3,7 @@ import { CardanoSyncClient , CardanoBlock, CardanoPoint } from "@utxorpc/sdk";
 import { protocol, config } from './index.js';
 import { getAddress } from './paths.js';
 import axios from "axios";
-import { MintRequestSchema , MintRequest, requestState , Request , RedemptionRequest } from './types.js';
+import { MintRequestSchema , MintRequest, requestState , Request , RedemptionRequest, PaymentPathState } from './types.js';
 import * as Lucid  from 'lucid-cardano'
 
 const client = new MongoClient("mongodb://127.0.0.1:27017");
@@ -46,7 +46,6 @@ async function startGarbageCollection(){
 
 async function getTip() {
   try{
-   const rcpClient = new CardanoSyncClient({ uri : config.utxoRpc.host,  headers:  config.utxoRpc.headers} );
    
   let tip = await axios.get("https://cardano-preview.blockfrost.io/api/v0/blocks/latest", {headers: {"project_id": "preview8RNLE7oZnZMFkv5YvnIZfwURkc1tHinO"}});
   return tip;
@@ -58,9 +57,8 @@ async function getTip() {
 async function startFollow() {
   let tip = await mongo.collection("height").findOne({type: "top"});
   let liveTip = await getTip();  
-  console.log(liveTip.data)
 
-  
+
   console.log("tip" , tip);
   let tipPoint = undefined ;   
   if(tip){
@@ -107,6 +105,10 @@ async function dumpHistory(){
   const chunkSize = 100; 
   let tip = await mongo.collection("height").findOne({type: "top"});
   console.log("tip" , tip);
+  if(tip === null){
+    tip = config.historyStart;
+  }
+
   let tipPoint = undefined ;   
   if(tip){
       tipPoint = {index: tip.slot, hash: new Uint8Array(Buffer.from(tip.hash, "hex"))};
@@ -135,7 +137,10 @@ async function dumpHistory(){
   console.log("Done Dumping History");
 }catch(e){
   console.log(e);
- await dumpHistory();
+  //sleep for 5 seconds and restart the indexer
+  setTimeout(() => {
+    dumpHistory();
+  }, 5000);
 }
 
 
@@ -244,8 +249,15 @@ async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
   const datum = tx.outputs[index].datum.toJson().valueOf() as any;
   const amount = datum.constr.fields[0].bigInt.int;
   const paymentPath = Number(datum.constr.fields[1].bigInt.int);
-  const state = requestState.received;
+  let state = requestState.received;
   const paymentAddress = getAddress(paymentPath)
+  const competingRequest = await mongo.collection("mintRequests").find({paymentPath, state: requestState.received}).toArray();
+  
+  if(competingRequest.length > 1){
+    state = requestState.conflicted;
+    await mongo.collection("mintRequests").updateMany({paymentPath, state: requestState.received}, {$set: {state: requestState.conflicted}})
+  }
+  await  mongo.collection("paths").findOneAndUpdate({index: paymentPath}, {$set: {state: PaymentPathState.processing}});
   const mintRequestListing : MintRequest = {txHash, txSlot, txIndex, txBlock, clientAccount, clientAddress, amount, state, paymentPath, paymentAddress};
   await mongo.collection("mintRequests").insertOne(mintRequestListing);
 }
@@ -272,38 +284,48 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
     const completedSlot =  Number(block.header.slot);
     const completionBlock =  Number(block.header.height);
     const mintRequest = await mongo.collection("mintRequests").findOne({txHash, txIndex});
+    const completionTx = Buffer.from(tx.hash).toString('hex');
     if(mintRequest){
       console.log("completing mint request", txHash, txIndex, mintRequest)
       if(tx.mint && tx.mint.length > 0){
+
           mintRequest.state = requestState.completed;
-          const mintTx = Buffer.from(tx.hash).toString('hex');
+          await mongo.collection("paths").updateOne({index: mintRequest.inxed}, {$set: {state: PaymentPathState.completed}});
+
           const payments = tx.auxiliary.metadata[0]?.value.metadatum.case === "array" ? tx.auxiliary.metadata[0].value.metadatum.value.items.map((item) => 
             item.metadatum.case === "array" ? (item.metadatum.value.items[0].metadatum.value as string)   : undefined   
             )
             : [];
-          await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed , mintTx, payments, completedSlot}});
+          await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed , completionTx, payments, completedSlot}});
           return;
         }else{
-          
+          await mongo.collection("paths").updateOne({index: mintRequest.inxed}, {$set: {state: PaymentPathState.open}});
+
           if( areUint8ArraysEqual(tx.outputs[0].address,Uint8ArrayAddress)){
             // Confescate the funds
             
-            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.confescated, completedSlot}});
+            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.confescated, completionTx, completedSlot}});
           }else{
             // reject
-            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected, completedSlot}});
+            await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected, completionTx, completedSlot}});
           }
         }
-    }
+        if(mintRequest.state === requestState.conflicted){
+          const competingRequests = await mongo.collection("mintRequests").find({paymentPath: mintRequest.paymentPath, state: requestState.conflicted}).toArray();
+          if(competingRequests.length === 1){
+            await mongo.collection("mintRequests").updateMany({paymentPath: mintRequest.paymentPath, state: requestState.conflicted}, {$set: {state: PaymentPathState.processing}});
+          }
+        }
+      }
 
     const redemptionRequest = await mongo.collection("redemptionRequests").findOne({txHash, txIndex});
     if(redemptionRequest){
       if(tx.mint && tx.mint.length > 0){
         const burnTx = Buffer.from(tx.hash).toString('hex');
-        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed, burnTx, completedSlot}});
+        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed, completionTx, burnTx, completedSlot}});
         return;
       }else{
-        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected , completedSlot }});
+        await mongo.collection("redemptionRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected ,completionTx , completedSlot }});
       }
       console.log("completing redemption request", txHash, txIndex, redemptionRequest)
     }
