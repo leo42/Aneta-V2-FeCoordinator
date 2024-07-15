@@ -7,7 +7,7 @@ import { MongoClient } from 'mongodb';
 import {PaymentPath , PaymentPathState} from './types.js';
 
 const bip32 = BIP32Factory(ecc);
-const client = new MongoClient("mongodb://127.0.0.1:27017");
+const client = new MongoClient(config.mongoUrl);
 const mongo =  client.db("webData");
 export async function startPaths(){
     await client.connect();

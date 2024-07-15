@@ -1,0 +1,7 @@
+
+services:
+  indexer:
+    image: indexer:latest
+    build:
+      context: .
+

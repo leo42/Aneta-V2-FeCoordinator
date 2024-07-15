@@ -11,5 +11,6 @@
      "btcNetwork": "testnet",
      "network": "preview",
      "paymentPaths": 10,
-     "pathReleaseTime": 1200000   
+     "pathReleaseTime": 1200000  ,
+    "mongoUrl": "mongodb://localhost:27017"
  }
