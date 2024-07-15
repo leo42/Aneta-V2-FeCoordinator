@@ -13,11 +13,12 @@ export async function startPaths(){
     mongo =  getDb("webData");
     setInterval(() => {
         checkPaths();    
-    }, 10000);
+    }, 1000 * 60 * 10);
 }
 
 
 async function checkPaths(){
+    console.log('Checking paths');  
     for(let i = 0; i < config.paymentPaths; i++){
         const path = await mongo.collection("paths").findOne({index: i});
         if(!path){
@@ -25,7 +26,7 @@ async function checkPaths(){
             await mongo.collection("paths").insertOne(paymentPath);
         }else{ 
             if(path.state === PaymentPathState.served, Date.now() -  path.serveTime > config.pathReleaseTime ){
-                await mongo.collection("paths").updateOne({index: i}, { $set: {state: PaymentPathState.open}});
+                await mongo.collection("paths").updateOne({index: i, state: PaymentPathState.served}, { $set: {state: PaymentPathState.open}});
             }
             if(path.state === PaymentPathState.completed){
                 const balance = await getBitcoinAddressBalance(path.address);
@@ -40,10 +41,13 @@ async function checkPaths(){
 
 async function getBitcoinAddressBalance(address: string): Promise<number> {
     const network = config.btcNetwork === 'mainnet' ? 'main' : 'test3';
-    const url = `https://api.blockcypher.com/v1/btc/${network}/addrs/${address}/balance`;
+    const token = config.blockcypherToken;
+    console.log(`Fetching Bitcoin address balance for ${address}..token ${token}.`);
+    const url = `https://api.blockcypher.com/v1/btc/${network}/addrs/${address}/balance?token=${token}`;
     try {
         const response = await fetch(url);
         const data = await response.json();
+        console.log(data);
         // The balance is usually in satoshis, convert to BTC if necessary
         const balanceInBTC = data.balance / 1e8;
         console.log(`Balance for ${address}: ${balanceInBTC} BTC`);
@@ -64,6 +68,7 @@ export function getAddress(index: number){
         return guardianIndex === 0 ? child.derive(index+1).publicKey.toString('hex') : child.derive(0).publicKey.toString('hex'); 
     });
     const pubkeys = HexKeys.map(key => Buffer.from(key, 'hex'));
+    console.log(pubkeys);
     const p2shAddress = bitcoin.payments.p2wsh({
         redeem: bitcoin.payments.p2ms({ m: topology.m , pubkeys ,
         network: bitcoin.networks[config.btcNetwork], }),

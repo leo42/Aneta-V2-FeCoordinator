@@ -128,7 +128,6 @@ async function dumpHistory(){
       console.timeEnd("Chunk")
       //set tip to the last block
       const lastBlock = chunk.block[chunk.block.length - 1].chain.value as CardanoBlock;
-      await mongo.collection("height").updateOne({type: "top"}, {$set: {hash: Buffer.from(lastBlock.header.hash).toString('hex') , slot: lastBlock.header.slot, height: lastBlock.header.height}}, {upsert: true});
       console.time("NextChunkFetch")
       chunk = await rcpClient.inner.dumpHistory( {startToken: tipPoint, maxItems: chunkSize})
       console.timeEnd("NextChunkFetch")
@@ -224,8 +223,10 @@ async function handleResetBlock(block: CardanoPoint){
         openRequests.some(([txHash, index]) => Buffer.from(input.txHash).toString('hex') === txHash && input.outputIndex === index))){
           handleRequestCompletion(block, tx);
           console.log("request Completion found", block.header.height, blockHash, tx.hash);
-    }    
+    }
+    
   }));  
+  await mongo.collection("height").updateOne({type: "top"}, {$set: {hash: Buffer.from(block.header.hash).toString('hex') , slot: block.header.slot, height: block.header.height}}, {upsert: true});
 }
 
 function getSender(tx){
@@ -251,13 +252,12 @@ async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
   const paymentPath = Number(datum.constr.fields[1].bigInt.int);
   let state = requestState.received;
   const paymentAddress = getAddress(paymentPath)
-  const competingRequest = await mongo.collection("mintRequests").find({paymentPath, state: requestState.received}).toArray();
-  
-  if(competingRequest.length > 1){
+  const competingRequest = await mongo.collection("mintRequests").find({paymentPath,  state: { $in: [requestState.received, requestState.conflicted] }}).toArray();
+  if(competingRequest.length >= 1){
     state = requestState.conflicted;
     await mongo.collection("mintRequests").updateMany({paymentPath, state: requestState.received}, {$set: {state: requestState.conflicted}})
   }
-  await  mongo.collection("paths").findOneAndUpdate({index: paymentPath}, {$set: {state: PaymentPathState.processing}});
+  await  mongo.collection("paths").findOneAndUpdate({index: paymentPath}, {$set: {state: PaymentPathState.processing, serveTime: Date.now()}});
   const mintRequestListing : MintRequest = {txHash, txSlot, txIndex, txBlock, clientAccount, clientAddress, amount, state, paymentPath, paymentAddress};
   await mongo.collection("mintRequests").insertOne(mintRequestListing);
 }
@@ -289,16 +289,14 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
       console.log("completing mint request", txHash, txIndex, mintRequest)
       if(tx.mint && tx.mint.length > 0){
 
-          mintRequest.state = requestState.completed;
 
           const payments = tx.auxiliary.metadata[0]?.value.metadatum.case === "array" ? tx.auxiliary.metadata[0].value.metadatum.value.items.map((item) => 
             item.metadatum.case === "array" ? (item.metadatum.value.items[0].metadatum.value as string)   : undefined   
             )
             : [];
           await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.completed , completionTx, payments, completedSlot}});
-          return;
+         
         }else{
-          await mongo.collection("paths").updateOne({index: mintRequest.inxed}, {$set: {state: PaymentPathState.open}});
 
           if( areUint8ArraysEqual(tx.outputs[0].address,Uint8ArrayAddress)){
             // Confescate the funds
@@ -309,13 +307,13 @@ async function handleRequestCompletion(block: CardanoBlock, tx: any){
             await mongo.collection("mintRequests").updateOne({txHash, txIndex}, {$set: {state: requestState.rejected, completionTx, completedSlot}});
           }
         }
-        if(mintRequest.state === requestState.conflicted){
+       if(mintRequest.state === requestState.conflicted){
           const competingRequests = await mongo.collection("mintRequests").find({paymentPath: mintRequest.paymentPath, state: requestState.conflicted}).toArray();
           if(competingRequests.length === 1){
-            await mongo.collection("mintRequests").updateMany({paymentPath: mintRequest.paymentPath, state: requestState.conflicted}, {$set: {state: PaymentPathState.processing}});
+            await mongo.collection("mintRequests").updateOne({paymentPath: mintRequest.paymentPath, state: requestState.conflicted}, {$set: {state: requestState.received}});
           }
         }else{
-          await mongo.collection("paths").updateOne({index: mintRequest.inxed}, {$set: {state: PaymentPathState.completed}});
+          await mongo.collection("paths").updateOne({index: mintRequest.paymentPath}, {$set: {state: PaymentPathState.completed}});
         }
       }
 
