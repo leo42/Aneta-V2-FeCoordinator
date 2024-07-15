@@ -3,15 +3,14 @@ import {BIP32Factory , BIP32Interface} from 'bip32';
 import * as ecc  from 'tiny-secp256k1'
 import {ECPairFactory}  from 'ecpair'
 import { topology , config } from './index.js';
-import { MongoClient } from 'mongodb';
 import {PaymentPath , PaymentPathState} from './types.js';
+import { getDb } from './db.js';
+import { Db } from 'mongodb';
 
-const bip32 = BIP32Factory(ecc);
-const client = new MongoClient(config.mongoUrl);
-const mongo =  client.db("webData");
+let mongo : Db
 export async function startPaths(){
-    await client.connect();
     // trigger every 10 seconds
+    mongo =  getDb("webData");
     setInterval(() => {
         checkPaths();    
     }, 10000);

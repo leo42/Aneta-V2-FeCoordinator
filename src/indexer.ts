@@ -1,13 +1,13 @@
-import { MongoClient } from 'mongodb';
+import { getDb } from './db.js';
 import { CardanoSyncClient , CardanoBlock, CardanoPoint } from "@utxorpc/sdk";
 import { protocol, config } from './index.js';
 import { getAddress } from './paths.js';
 import axios from "axios";
+import { Db } from 'mongodb';
 import { MintRequestSchema , MintRequest, requestState , Request , RedemptionRequest, PaymentPathState } from './types.js';
 import * as Lucid  from 'lucid-cardano'
 
-const client = new MongoClient("mongodb://127.0.0.1:27017");
-const mongo =  client.db("webData");
+let mongo : Db;
 let openRequests: Array<[string, number, Date]> = [];
 let lucid : Lucid.Lucid;
 let address : string;
@@ -15,7 +15,7 @@ let Uint8ArrayAddress : Uint8Array;
 
 export async function start() {
   console.log("Starting Indexer");
-  await client.connect();
+  mongo = getDb("webData");
   const openMintRequests = await mongo.collection("mintRequests").find({state: requestState.received}).toArray();
   const openRedemptionRequests =await mongo.collection("redemptionRequests").find({state: requestState.received}).toArray();
   openMintRequests.map((request) => openRequests.push([request.txHash, request.txIndex, new Date()]));
