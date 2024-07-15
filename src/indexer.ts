@@ -29,7 +29,7 @@ export async function start() {
 
   console.log("cBTCPolicy", protocol);
   console.log("Address", address);
-  await dumpHistory();
+ // await dumpHistory();
   startFollow();
 }
 
