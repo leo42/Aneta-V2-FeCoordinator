@@ -22,6 +22,7 @@
   },
   "scripts": {
     "start": "npm-run-all --parallel watch:build watch:server --print-label",
+    "build": "tsc",
     "watch:build": "tsc --watch",
     "watch:server": "nodemon dist/index.js --watch ./dist"
   },
