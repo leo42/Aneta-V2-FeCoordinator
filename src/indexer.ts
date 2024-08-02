@@ -26,10 +26,10 @@ export async function start() {
   const cBTCPolicy = lucid.utils.mintingPolicyToId(mintingScript);
   address =  lucid.utils.credentialToAddress({type: "Script", hash: cBTCPolicy});
   Uint8ArrayAddress =  convertAddressToBytes(address);
-
+console.log("Address", address);
   console.log("cBTCPolicy", protocol);
   console.log("Address", address);
- // await dumpHistory();
+  //await dumpHistory();
   startFollow();
 }
 
@@ -47,7 +47,7 @@ async function startGarbageCollection(){
 async function getTip() {
   try{
    
-  let tip = await axios.get("https://cardano-preview.blockfrost.io/api/v0/blocks/latest", {headers: {"project_id": "preview8RNLE7oZnZMFkv5YvnIZfwURkc1tHinO"}});
+  let tip = await axios.get("https://cardano-preprod.blockfrost.io/api/v0/blocks/latest", {headers: {"project_id": "preprod7jqmbnofXhcZkpOg01zcohiR3AeaEGJ2"}});
   return tip;
   }catch(e){
   }
@@ -57,7 +57,9 @@ async function getTip() {
 async function startFollow() {
   let tip = await mongo.collection("height").findOne({type: "top"});
   let liveTip = await getTip();  
-
+  if(!tip){
+    tip = config.historyStart;
+  }
 
   console.log("tip" , tip);
   let tipPoint = undefined ;   
@@ -105,7 +107,7 @@ async function dumpHistory(){
   const chunkSize = 100; 
   let tip = await mongo.collection("height").findOne({type: "top"});
   console.log("tip" , tip);
-  if(tip === null){
+  if(!tip){
     tip = config.historyStart;
   }
 
@@ -196,8 +198,8 @@ async function handleResetBlock(block: CardanoPoint){
  // console.log("Tx",  Uint8ArrayAddress);
 
   await Promise.all(block.body.tx.map(async (tx) => {
-
     if(tx.outputs.some((output) => areUint8ArraysEqual(output.address, Uint8ArrayAddress))){
+      console.log("Found a incoming request", block.header.height, blockHash, tx.hash);
         tx.outputs.forEach(async (ouput, index) => {
            if(areUint8ArraysEqual(ouput.address, Uint8ArrayAddress)){
             openRequests.push([Buffer.from(tx.hash).toString('hex')  , index, new Date()]);

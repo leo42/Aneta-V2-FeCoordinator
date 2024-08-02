@@ -1,0 +1,9 @@
+{
+"topology" : [
+    {"name": "Guardian Angel 1","ip": "142.93.164.76" , "port": 3000, "AdaPkHash":"78e88e01d77184e41ba7ceb36af9fb6844640ba9ea968a1aa97c8d6e","btcKey":"xpub6D7mLhsjDuB3QbEUZXpMonYf4YL4uYyE9hXYDEMw6x8hdpbUjcGxEQ74RMmVEvMFECTFPFqiqNPWuvFkcu1p66Z8Up5UoqP9ViFC4Azbhjt"},
+    {"name": "Guardian Angel 2","ip": "161.35.68.183" , "port": 3000, "AdaPkHash":"a85265597b7023b0c56f550a688c16a1408d21d8154ae50ec94bd734","btcKey":"xpub6BgX29mAazxqnsg57tAyuvEsmmgk4RZQG265WXT5N5FbwbGXNfTFcMhD9eTtL95zNjhGay3kxzXQzpmEq8PTqL3NNp26mganvbcfV6nm9fn"},
+    {"name": "Guardian Angel 3","ip": "207.154.211.32" , "port": 3000, "AdaPkHash":"a8a38a78c40bfe4dff33a5072902c006739ab21d7e01f67254d609e1","btcKey":"xpub6CaUhJFaFgt9gaNnaAFiMULmuP2w1xV71aPPZyAvLbxJUENLZKpGnkWneS2jEndX79R25MeWsbjLDT8tfmHQSyWUnKrXTZPo6RUnCxrTKVQ"}
+],
+"m":2
+}
+
