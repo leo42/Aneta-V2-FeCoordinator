@@ -13,7 +13,7 @@ export async function startPaths(){
     mongo =  getDb("webData");
     setInterval(() => {
         checkPaths();    
-    }, 1000 * 60 * 10);
+    }, 1000 * 60 * 1);
 }
 
 
