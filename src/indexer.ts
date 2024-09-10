@@ -31,7 +31,7 @@ console.log("Address", address);
   console.log("cBTCPolicy", protocol);
   console.log("Address", address);
   await dumpHistory();
-//  startFollow();
+  startFollow();
 }
 
 
