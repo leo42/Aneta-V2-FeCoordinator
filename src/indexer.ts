@@ -142,9 +142,7 @@ async function dumpHistory(){
 }catch(e){
   console.log(e);
   //sleep for 5 seconds and restart the indexer
-  setTimeout(async () => {
-   await dumpHistory();
-  }, 5000);
+
 }
 
 
