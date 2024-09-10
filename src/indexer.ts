@@ -208,6 +208,7 @@ async function handleResetBlock(block ){
            if(areUint8ArraysEqual(ouput.address, Uint8ArrayAddress)){
             openRequests.push([Buffer.from(tx.hash).toString('hex')  , index, new Date()]);
             try{
+              console.log("ouput", ouput , ouput.assets);
               if(ouput.assets.length === 0){
                 await handleMintRequest(block, tx, index);
               }else{
@@ -246,7 +247,7 @@ function getSender(tx){
 
 
 
-async function handleMintRequest(block: cardano.Block, tx: any, index: number){
+async function handleMintRequest(block: cardano.Block, tx: cardano.Tx, index: number){
   const txHash = Buffer.from(tx.hash).toString('hex');
   const txIndex = index;
   const txSlot =  Number(block.header.slot);
@@ -254,8 +255,9 @@ async function handleMintRequest(block: cardano.Block, tx: any, index: number){
   const clientAddress = getSender(tx);
   const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
   const datum = tx.outputs[index].datum.toJson().valueOf() as any;
-  const amount = datum.constr.fields[0].bigInt.int;
-  const paymentPath = Number(datum.constr.fields[1].bigInt.int);
+  console.log("datum", datum);
+  const amount = datum.payload.constr.fields[0].bigInt.int;
+  const paymentPath = Number(datum.payload.constr.fields[1].bigInt.int);
   let state = requestState.received;
   const paymentAddress = getAddress(paymentPath)
   const competingRequest = await mongo.collection("mintRequests").find({paymentPath,  state: { $in: [requestState.received, requestState.conflicted] }}).toArray();
