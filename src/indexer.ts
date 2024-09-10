@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
-import { CardanoSyncClient , CardanoBlock, CardanoPoint } from "@utxorpc/sdk";
+import { CardanoSyncClient } from "@utxorpc/sdk";
+import * as cardano from "@utxorpc/spec/lib/utxorpc/v1alpha/cardano/cardano_pb.js";
 import { protocol, config } from './index.js';
 import { getAddress } from './paths.js';
 import axios from "axios";
@@ -29,8 +30,8 @@ export async function start() {
 console.log("Address", address);
   console.log("cBTCPolicy", protocol);
   console.log("Address", address);
-  //await dumpHistory();
-  startFollow();
+  await dumpHistory();
+//  startFollow();
 }
 
 
@@ -41,8 +42,6 @@ async function startGarbageCollection(){
     openRequests = openRequests.filter(([, , date]) => date > threeDaysAgo);
   }, 10000);
 }
-
-
 
 async function getTip() {
   try{
@@ -114,7 +113,11 @@ async function dumpHistory(){
   let tipPoint = undefined ;   
   if(tip){
       tipPoint = {index: tip.slot, hash: new Uint8Array(Buffer.from(tip.hash, "hex"))};
+  }else {
+    tipPoint = {index : config.historyStart.slot , hash : new Uint8Array(Buffer.from(config.historyStart.hash, "hex"))}
+
   }
+
   console.log("Starting sync from tip", tipPoint);
   const rcpClient = new CardanoSyncClient({ uri : config.utxoRpc.host,  headers : config.utxoRpc.headers} );
   let chunk = await rcpClient.inner.dumpHistory( {startToken: tipPoint, maxItems: chunkSize})
@@ -125,11 +128,11 @@ async function dumpHistory(){
      // console.log(chunk.nextToken)
       tipPoint = chunk.nextToken;
       for (const block of chunk.block) {
-         await handleNewBlock(block.chain.value as CardanoBlock);
+         await handleNewBlock(block.chain.value as cardano.Block);
       };
       console.timeEnd("Chunk")
       //set tip to the last block
-      const lastBlock = chunk.block[chunk.block.length - 1].chain.value as CardanoBlock;
+      const lastBlock = chunk.block[chunk.block.length - 1].chain.value as cardano.Block;
       console.time("NextChunkFetch")
       chunk = await rcpClient.inner.dumpHistory( {startToken: tipPoint, maxItems: chunkSize})
       console.timeEnd("NextChunkFetch")
@@ -154,7 +157,8 @@ function decodeDatum(datum: string)  {
   return Lucid.Data.from(datum, MintRequestSchema);
 }
 
-async function handleResetBlock(block: CardanoPoint){
+async function handleResetBlock(block ){
+  console.log("handle ResetBlock ", block);
   let blockSlot = block.slot;
   const blockHash = Buffer.from(block.hash).toString('hex');
   
@@ -170,7 +174,7 @@ async function handleResetBlock(block: CardanoPoint){
 }
 
 
- async function handleUndoBlock(block: CardanoBlock){
+ async function handleUndoBlock(block: cardano.Block){
   let blockSlot = block.header.slot;
   const blockHash = Buffer.from(block.header.hash).toString('hex');
   await mongo.collection("mintRequests").updateMany({completedSlot: blockSlot}, {$set: {state: requestState.received}, $unset: {mintTx: "", payments: "", completedSlot: ""}});
@@ -183,7 +187,7 @@ async function handleResetBlock(block: CardanoPoint){
 }
 
 
- async function handleNewBlock(block: CardanoBlock) : Promise<Boolean>{
+ async function handleNewBlock(block: cardano.Block) : Promise<Boolean>{
     let tip = await mongo.collection("height").findOne({type: "top"});
 
     if(tip && tip.height == block.header.height){
@@ -242,7 +246,7 @@ function getSender(tx){
 
 
 
-async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
+async function handleMintRequest(block: cardano.Block, tx: any, index: number){
   const txHash = Buffer.from(tx.hash).toString('hex');
   const txIndex = index;
   const txSlot =  Number(block.header.slot);
@@ -265,7 +269,7 @@ async function handleMintRequest(block: CardanoBlock, tx: any, index: number){
 }
 
 
-async function handleRedemptionRequest(block: CardanoBlock, tx: any, index: number){
+async function handleRedemptionRequest(block: cardano.Block, tx: any, index: number){
   const txHash = Buffer.from(tx.hash).toString('hex');
   const txIndex = index;
   const txSlot =  Number(block.header.slot);
@@ -279,7 +283,7 @@ async function handleRedemptionRequest(block: CardanoBlock, tx: any, index: numb
 }
 
 
-async function handleRequestCompletion(block: CardanoBlock, tx: any){
+async function handleRequestCompletion(block: cardano.Block, tx: any){
   for(const input of tx.inputs){ 
     const txHash =  Buffer.from(input.txHash).toString('hex');
     const txIndex = input.outputIndex;

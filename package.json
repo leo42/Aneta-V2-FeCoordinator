@@ -1,7 +1,7 @@
 {
   "type": "module",
   "dependencies": {
-    "@utxorpc/sdk": "^0.2.0",
+    "@utxorpc/sdk": "^0.4.0",
     "axios": "^1.7.2",
     "bip32": "^4.0.0",
     "bitcoinjs-lib": "^6.1.6",
