@@ -6,11 +6,11 @@ import { getAddress } from './paths.js';
 import axios from "axios";
 import { Db } from 'mongodb';
 import { MintRequestSchema , MintRequest, requestState , Request , RedemptionRequest, PaymentPathState } from './types.js';
-import * as Lucid  from 'lucid-cardano'
+import * as LucidEvolution from '@lucid-evolution/lucid'
+import { Lucid } from 'lucid-cardano';
 
 let mongo : Db;
 let openRequests: Array<[string, number, Date]> = [];
-let lucid : Lucid.Lucid;
 let address : string;
 let Uint8ArrayAddress : Uint8Array;
 
@@ -22,10 +22,9 @@ export async function start() {
   openMintRequests.map((request) => openRequests.push([request.txHash, request.txIndex, new Date()]));
   openRedemptionRequests.map((request) => openRequests.push([request.txHash, request.txIndex, new Date()]));
   startGarbageCollection()
-  lucid = await Lucid.Lucid.new( undefined, (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as Lucid.Network);
-  const mintingScript =  {type: "PlutusV2" as Lucid.ScriptType, script: protocol.contract};
-  const cBTCPolicy = lucid.utils.mintingPolicyToId(mintingScript);
-  address =  lucid.utils.credentialToAddress({type: "Script", hash: cBTCPolicy});
+  const mintingScript =  {type: "PlutusV3" as LucidEvolution.ScriptType, script: protocol.contract};
+  const cBTCPolicy = LucidEvolution.mintingPolicyToId(mintingScript);
+  address =  LucidEvolution.credentialToAddress(  (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as LucidEvolution.Network, {type: "Script", hash: cBTCPolicy});
   Uint8ArrayAddress =  convertAddressToBytes(address);
 console.log("Address", address);
   console.log("cBTCPolicy", protocol);
@@ -152,7 +151,7 @@ async function dumpHistory(){
  
 function decodeDatum(datum: string)  {
   console.log("Decoding Datum", datum);
-  return Lucid.Data.from(datum, MintRequestSchema);
+  return LucidEvolution.Data.from(datum, MintRequestSchema);
 }
 
 async function handleResetBlock(block ){
@@ -251,7 +250,7 @@ async function handleMintRequest(block: cardano.Block, tx: cardano.Tx, index: nu
   const txSlot =  Number(block.header.slot);
   const txBlock =  Number(block.header.height);
   const clientAddress = getSender(tx);
-  const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
+  const clientAccount = LucidEvolution.credentialToRewardAddress( (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as LucidEvolution.Network, LucidEvolution.stakeCredentialOf(clientAddress));
   const datum = tx.outputs[index].datum.toJson().valueOf() as any;
   console.log("datum", datum);
   const amount = datum.payload.constr.fields[0].bigInt.int;
@@ -275,7 +274,7 @@ async function handleRedemptionRequest(block: cardano.Block, tx: any, index: num
   const txSlot =  Number(block.header.slot);
   const txBlock =  Number(block.header.height);
   const clientAddress = getSender(tx);
-  const clientAccount = lucid.utils.credentialToRewardAddress(lucid.utils.stakeCredentialOf(clientAddress));
+  const clientAccount = LucidEvolution.credentialToRewardAddress( (config.network.charAt(0).toUpperCase() + config.network.slice(1)) as LucidEvolution.Network, LucidEvolution.stakeCredentialOf(clientAddress));
   const amount = Number(tx.outputs[index].assets[0].assets[0].outputCoin);
   const state = requestState.received;
   const redemptionRequestListing : RedemptionRequest = {txHash, txIndex, txSlot, txBlock, clientAccount, clientAddress, amount, state, burnTx: tx.inputs[0].txHash}; 
@@ -342,14 +341,14 @@ async function handleRequestCompletion(block: cardano.Block, tx: any){
 
 function convertAddressToBech32(byteArray: Uint8Array): string {
 
-  const address = Lucid.C.Address.from_bytes(byteArray);
+  const address = LucidEvolution.CML.Address.from_raw_bytes(byteArray);
   const bech32Address = address.to_bech32("addr_test");
   return bech32Address;
 }
 
 function convertAddressToBytes(bech32Address: string): Uint8Array {
-  const address = Lucid.C.Address.from_bech32(bech32Address);
-  return address.to_bytes();
+  const address = LucidEvolution.CML.Address.from_bech32(bech32Address);
+  return address.to_raw_bytes();
 }
 
 function areUint8ArraysEqual(a: Uint8Array, b: Uint8Array): boolean {
