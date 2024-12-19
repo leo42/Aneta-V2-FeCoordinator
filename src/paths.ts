@@ -29,14 +29,21 @@ async function checkPaths(){
                 await mongo.collection("paths").updateOne({index: i, state: PaymentPathState.served}, { $set: {state: PaymentPathState.open}});
             }
             if(path.state === PaymentPathState.completed){
-                const balance = await getBitcoinAddressBalance(path.address);
-                if(balance === 0){
-                    await mongo.collection("paths").updateOne({index: i}, { $set: {state: PaymentPathState.open}});
+                //const balance = await getBitcoinAddressBalance(path.address);
+                if(isPathFree(path.index)){
+                    await mongo.collection("paths").updateOne({index: i , state: PaymentPathState.completed}, { $set: {state: PaymentPathState.open}});
                 }
                 
             }
         }
     }
+}
+
+
+async function isPathFree(index: number){
+  const response = await fetch(`${config.GAUrl}/paymentpaths/${index}`);
+  const data = await response.json();
+  return data.state === 0 
 }
 
 async function getBitcoinAddressBalance(address: string): Promise<number> {
