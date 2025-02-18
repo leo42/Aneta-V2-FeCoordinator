@@ -6,4 +6,10 @@ services:
       context: .
     volumes:
       - ./config:/app/config
+    networks:
+      - anetav2_backend
     restart: always
+
+networks:
+  anetav2_backend:
+    external: true
